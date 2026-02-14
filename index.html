@@ -52,6 +52,19 @@
       color: var(--danger);
     }
 
+    .bomb-feed {
+      min-width: 170px;
+      text-align: right;
+      font-size: 0.92rem;
+      color: #ffd98f;
+      opacity: 0;
+      transition: opacity 160ms ease;
+    }
+
+    .bomb-feed.show {
+      opacity: 1;
+    }
+
     canvas {
       width: 100%;
       height: auto;
@@ -98,6 +111,7 @@
     <section class="hud" aria-live="polite">
       <div>Score: <b id="score">0</b></div>
       <div class="misses">Misses: <b id="misses">0</b> / 5</div>
+      <div class="bomb-feed" id="bombFeed" role="status" aria-live="polite"></div>
     </section>
 
     <canvas id="game" width="700" height="500" aria-label="Catch the Dopamine spil"></canvas>
@@ -114,6 +128,7 @@
     const scoreEl = document.getElementById('score');
     const missesEl = document.getElementById('misses');
     const statusEl = document.getElementById('status');
+    const bombFeedEl = document.getElementById('bombFeed');
     const restartBtn = document.getElementById('restart');
 
     const GAME = {
@@ -122,6 +137,9 @@
       playerSpeed: 7,
       maxMisses: 5,
       spawnIntervalMs: 520,
+      bombChance: 1 / 12,
+      bombBlastRadius: 160,
+      bombFeedDurationMs: 1200,
     };
 
     const player = {
@@ -139,6 +157,9 @@
     let lastSpawn = 0;
     let gameOver = false;
     let rafId = null;
+    let previousSpawnWasBomb = false;
+    let explosionFx = [];
+    let bombFeedTimeout = null;
 
     function random(min, max) {
       return Math.random() * (max - min) + min;
@@ -146,13 +167,53 @@
 
     function spawnCircle() {
       const radius = random(10, 24);
+      const shouldSpawnBomb = !previousSpawnWasBomb && Math.random() < GAME.bombChance;
+      const type = shouldSpawnBomb ? 'bomb' : 'normal';
       circles.push({
         x: random(radius, GAME.width - radius),
         y: -radius,
         radius,
         speed: random(2.2, 4.8),
         hue: Math.floor(random(0, 360)),
+        type,
       });
+      previousSpawnWasBomb = shouldSpawnBomb;
+    }
+
+    function showBombFeed(message) {
+      bombFeedEl.textContent = message;
+      bombFeedEl.classList.add('show');
+      if (bombFeedTimeout) clearTimeout(bombFeedTimeout);
+      bombFeedTimeout = setTimeout(() => {
+        bombFeedEl.classList.remove('show');
+        bombFeedEl.textContent = '';
+      }, GAME.bombFeedDurationMs);
+    }
+
+    function triggerBombExplosion(bombCircle) {
+      let removedCount = 0;
+
+      for (let i = circles.length - 1; i >= 0; i--) {
+        const c = circles[i];
+        if (c === bombCircle) continue;
+        const dx = c.x - bombCircle.x;
+        const dy = c.y - bombCircle.y;
+        if (Math.hypot(dx, dy) <= GAME.bombBlastRadius) {
+          circles.splice(i, 1);
+          removedCount += 1;
+        }
+      }
+
+      score += removedCount;
+      explosionFx.push({
+        x: bombCircle.x,
+        y: bombCircle.y,
+        age: 0,
+        maxAge: 320,
+      });
+
+      showBombFeed(`💣 Bomb! +${removedCount} bonus`);
+      updateHud();
     }
 
     function resetGame() {
@@ -161,6 +222,14 @@
       misses = 0;
       lastSpawn = 0;
       gameOver = false;
+      previousSpawnWasBomb = false;
+      explosionFx = [];
+      if (bombFeedTimeout) {
+        clearTimeout(bombFeedTimeout);
+        bombFeedTimeout = null;
+      }
+      bombFeedEl.classList.remove('show');
+      bombFeedEl.textContent = '';
       player.x = GAME.width / 2 - player.width / 2;
       updateHud();
       statusEl.textContent = 'Brug ← og → for at bevæge spilleren.';
@@ -199,8 +268,23 @@
 
         if (withinX && hitPlayer) {
           circles.splice(i, 1);
-          score += 1;
+          if (c.type === 'bomb') {
+            triggerBombExplosion(c);
+          } else {
+            score += 1;
+            updateHud();
+          }
+          continue;
+        }
+
+        if (c.type === 'bomb' && c.y - c.radius > GAME.height) {
+          circles.splice(i, 1);
+          misses += 1;
           updateHud();
+          if (misses >= GAME.maxMisses) {
+            endGame();
+            break;
+          }
           continue;
         }
 
@@ -212,6 +296,14 @@
             endGame();
             break;
           }
+        }
+      }
+
+      for (let i = explosionFx.length - 1; i >= 0; i--) {
+        const fx = explosionFx[i];
+        fx.age += 16;
+        if (fx.age >= fx.maxAge) {
+          explosionFx.splice(i, 1);
         }
       }
     }
@@ -231,11 +323,52 @@
       drawBackgroundStars();
 
       for (const c of circles) {
+        if (c.type === 'bomb') {
+          ctx.beginPath();
+          ctx.arc(c.x, c.y, c.radius, 0, Math.PI * 2);
+          ctx.fillStyle = '#ff8a3d';
+          ctx.fill();
+
+          ctx.beginPath();
+          ctx.arc(c.x, c.y, c.radius * 0.75, 0, Math.PI * 2);
+          ctx.strokeStyle = '#ffd166';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          ctx.fillStyle = '#241208';
+          ctx.font = `bold ${Math.max(14, c.radius + 2)}px system-ui`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('💣', c.x, c.y + 1);
+          continue;
+        }
+
         ctx.beginPath();
         ctx.arc(c.x, c.y, c.radius, 0, Math.PI * 2);
         ctx.fillStyle = `hsl(${c.hue} 85% 62%)`;
         ctx.fill();
       }
+
+      for (const fx of explosionFx) {
+        const progress = fx.age / fx.maxAge;
+        const radius = 22 + progress * (GAME.bombBlastRadius - 22);
+        const alpha = 1 - progress;
+
+        ctx.beginPath();
+        ctx.arc(fx.x, fx.y, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255, 208, 92, ${alpha})`;
+        ctx.lineWidth = 4;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(fx.x, fx.y, radius * 0.65, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255, 120, 68, ${alpha * 0.9})`;
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
 
       ctx.fillStyle = player.color;
       ctx.fillRect(player.x, player.y, player.width, player.height);
