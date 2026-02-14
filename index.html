@@ -61,6 +61,21 @@
       transition: opacity 160ms ease;
     }
 
+    .freeze-timer {
+      min-width: 170px;
+      text-align: center;
+      font-size: 0.95rem;
+      font-weight: 800;
+      color: #b5f4ff;
+      opacity: 0;
+      transition: opacity 160ms ease;
+      text-shadow: 0 0 10px rgba(125, 241, 255, 0.45);
+    }
+
+    .freeze-timer.show {
+      opacity: 1;
+    }
+
     .bomb-feed.show {
       opacity: 1;
     }
@@ -111,6 +126,7 @@
     <section class="hud" aria-live="polite">
       <div>Score: <b id="score">0</b></div>
       <div class="misses">Misses: <b id="misses">0</b> / 5</div>
+      <div class="freeze-timer" id="freezeTimer" role="status" aria-live="polite"></div>
       <div class="bomb-feed" id="bombFeed" role="status" aria-live="polite"></div>
     </section>
 
@@ -129,6 +145,7 @@
     const missesEl = document.getElementById('misses');
     const statusEl = document.getElementById('status');
     const bombFeedEl = document.getElementById('bombFeed');
+    const freezeTimerEl = document.getElementById('freezeTimer');
     const restartBtn = document.getElementById('restart');
 
     const GAME = {
@@ -140,6 +157,9 @@
       bombChance: 1 / 12,
       bombBlastRadius: 160,
       bombFeedDurationMs: 1200,
+      freezeChance: 1 / 15,
+      freezeDurationMs: 3000,
+      freezeSpeedMultiplier: 0.35,
     };
 
     const player = {
@@ -160,6 +180,7 @@
     let previousSpawnWasBomb = false;
     let explosionFx = [];
     let bombFeedTimeout = null;
+    let freezeUntil = 0;
 
     function random(min, max) {
       return Math.random() * (max - min) + min;
@@ -168,7 +189,8 @@
     function spawnCircle() {
       const radius = random(10, 24);
       const shouldSpawnBomb = !previousSpawnWasBomb && Math.random() < GAME.bombChance;
-      const type = shouldSpawnBomb ? 'bomb' : 'normal';
+      const shouldSpawnFreeze = !shouldSpawnBomb && Math.random() < GAME.freezeChance;
+      const type = shouldSpawnBomb ? 'bomb' : shouldSpawnFreeze ? 'freeze' : 'normal';
       circles.push({
         x: random(radius, GAME.width - radius),
         y: -radius,
@@ -216,6 +238,22 @@
       updateHud();
     }
 
+    function activateFreeze() {
+      freezeUntil = performance.now() + GAME.freezeDurationMs;
+      updateFreezeHud(freezeUntil - performance.now());
+    }
+
+    function updateFreezeHud(remainingMs) {
+      if (remainingMs <= 0) {
+        freezeTimerEl.classList.remove('show');
+        freezeTimerEl.textContent = '';
+        return;
+      }
+
+      freezeTimerEl.classList.add('show');
+      freezeTimerEl.textContent = `❄ Freeze: ${(remainingMs / 1000).toFixed(1)}s`;
+    }
+
     function resetGame() {
       circles = [];
       score = 0;
@@ -224,12 +262,15 @@
       gameOver = false;
       previousSpawnWasBomb = false;
       explosionFx = [];
+      freezeUntil = 0;
       if (bombFeedTimeout) {
         clearTimeout(bombFeedTimeout);
         bombFeedTimeout = null;
       }
       bombFeedEl.classList.remove('show');
       bombFeedEl.textContent = '';
+      freezeTimerEl.classList.remove('show');
+      freezeTimerEl.textContent = '';
       player.x = GAME.width / 2 - player.width / 2;
       updateHud();
       statusEl.textContent = 'Brug ← og → for at bevæge spilleren.';
@@ -254,6 +295,8 @@
       player.x = Math.max(0, Math.min(GAME.width - player.width, player.x));
 
       const now = performance.now();
+      const freezeActive = now < freezeUntil;
+      updateFreezeHud(freezeUntil - now);
       if (now - lastSpawn >= GAME.spawnIntervalMs) {
         spawnCircle();
         lastSpawn = now;
@@ -261,7 +304,7 @@
 
       for (let i = circles.length - 1; i >= 0; i--) {
         const c = circles[i];
-        c.y += c.speed;
+        c.y += c.speed * (freezeActive ? GAME.freezeSpeedMultiplier : 1);
 
         const withinX = c.x + c.radius > player.x && c.x - c.radius < player.x + player.width;
         const hitPlayer = c.y + c.radius >= player.y && c.y - c.radius <= player.y + player.height;
@@ -270,6 +313,8 @@
           circles.splice(i, 1);
           if (c.type === 'bomb') {
             triggerBombExplosion(c);
+          } else if (c.type === 'freeze') {
+            activateFreeze();
           } else {
             score += 1;
             updateHud();
@@ -340,6 +385,26 @@
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText('💣', c.x, c.y + 1);
+          continue;
+        }
+
+        if (c.type === 'freeze') {
+          ctx.beginPath();
+          ctx.arc(c.x, c.y, c.radius, 0, Math.PI * 2);
+          ctx.fillStyle = '#74e2ff';
+          ctx.fill();
+
+          ctx.beginPath();
+          ctx.arc(c.x, c.y, c.radius * 0.72, 0, Math.PI * 2);
+          ctx.strokeStyle = '#e6fbff';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          ctx.fillStyle = '#0c3057';
+          ctx.font = `bold ${Math.max(12, c.radius + 1)}px system-ui`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('❄', c.x, c.y + 1);
           continue;
         }
 
