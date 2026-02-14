@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="da">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Catch the Dopamine</title>
+  <style>
+    :root {
+      --bg: #0f1226;
+      --panel: #1a1f3f;
+      --text: #f3f6ff;
+      --accent: #7ef9ff;
+      --danger: #ff6b9a;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at top, #1a1f3f 0%, var(--bg) 45%, #090b17 100%);
+      color: var(--text);
+      padding: 16px;
+    }
+
+    .game-wrap {
+      width: min(92vw, 700px);
+    }
+
+    .hud {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(2px);
+    }
+
+    .hud b {
+      color: var(--accent);
+      font-size: 1.25rem;
+      letter-spacing: 0.3px;
+    }
+
+    .misses b {
+      color: var(--danger);
+    }
+
+    canvas {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 12px;
+      border: 2px solid rgba(255, 255, 255, 0.15);
+      background: linear-gradient(180deg, #171c3a 0%, #10142b 65%, #0b0d1d 100%);
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.35);
+    }
+
+    .controls {
+      margin-top: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .status {
+      min-height: 1.4em;
+      font-weight: 600;
+      color: #ffd8a8;
+    }
+
+    button {
+      border: none;
+      border-radius: 999px;
+      padding: 10px 16px;
+      font-weight: 700;
+      color: #091020;
+      background: linear-gradient(135deg, #7ef9ff, #78ffd6);
+      cursor: pointer;
+      transition: transform 0.12s ease, box-shadow 0.12s ease;
+      box-shadow: 0 6px 18px rgba(126, 249, 255, 0.35);
+    }
+
+    button:hover { transform: translateY(-1px); }
+    button:active { transform: translateY(1px); }
+  </style>
+</head>
+<body>
+  <main class="game-wrap">
+    <section class="hud" aria-live="polite">
+      <div>Score: <b id="score">0</b></div>
+      <div class="misses">Misses: <b id="misses">0</b> / 5</div>
+    </section>
+
+    <canvas id="game" width="700" height="500" aria-label="Catch the Dopamine spil"></canvas>
+
+    <div class="controls">
+      <div class="status" id="status">Brug ← og → for at bevæge spilleren.</div>
+      <button id="restart" type="button">Restart</button>
+    </div>
+  </main>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const missesEl = document.getElementById('misses');
+    const statusEl = document.getElementById('status');
+    const restartBtn = document.getElementById('restart');
+
+    const GAME = {
+      width: canvas.width,
+      height: canvas.height,
+      playerSpeed: 7,
+      maxMisses: 5,
+      spawnIntervalMs: 520,
+    };
+
+    const player = {
+      width: 90,
+      height: 18,
+      x: GAME.width / 2 - 45,
+      y: GAME.height - 40,
+      color: '#a6c8ff',
+    };
+
+    let keys = { left: false, right: false };
+    let circles = [];
+    let score = 0;
+    let misses = 0;
+    let lastSpawn = 0;
+    let gameOver = false;
+    let rafId = null;
+
+    function random(min, max) {
+      return Math.random() * (max - min) + min;
+    }
+
+    function spawnCircle() {
+      const radius = random(10, 24);
+      circles.push({
+        x: random(radius, GAME.width - radius),
+        y: -radius,
+        radius,
+        speed: random(2.2, 4.8),
+        hue: Math.floor(random(0, 360)),
+      });
+    }
+
+    function resetGame() {
+      circles = [];
+      score = 0;
+      misses = 0;
+      lastSpawn = 0;
+      gameOver = false;
+      player.x = GAME.width / 2 - player.width / 2;
+      updateHud();
+      statusEl.textContent = 'Brug ← og → for at bevæge spilleren.';
+      if (!rafId) rafId = requestAnimationFrame(loop);
+    }
+
+    function updateHud() {
+      scoreEl.textContent = String(score);
+      missesEl.textContent = String(misses);
+    }
+
+    function endGame() {
+      gameOver = true;
+      statusEl.textContent = 'Game Over! Tryk på Restart for at spille igen.';
+    }
+
+    function update() {
+      if (gameOver) return;
+
+      if (keys.left) player.x -= GAME.playerSpeed;
+      if (keys.right) player.x += GAME.playerSpeed;
+      player.x = Math.max(0, Math.min(GAME.width - player.width, player.x));
+
+      const now = performance.now();
+      if (now - lastSpawn >= GAME.spawnIntervalMs) {
+        spawnCircle();
+        lastSpawn = now;
+      }
+
+      for (let i = circles.length - 1; i >= 0; i--) {
+        const c = circles[i];
+        c.y += c.speed;
+
+        const withinX = c.x + c.radius > player.x && c.x - c.radius < player.x + player.width;
+        const hitPlayer = c.y + c.radius >= player.y && c.y - c.radius <= player.y + player.height;
+
+        if (withinX && hitPlayer) {
+          circles.splice(i, 1);
+          score += 1;
+          updateHud();
+          continue;
+        }
+
+        if (c.y - c.radius > GAME.height) {
+          circles.splice(i, 1);
+          misses += 1;
+          updateHud();
+          if (misses >= GAME.maxMisses) {
+            endGame();
+            break;
+          }
+        }
+      }
+    }
+
+    function drawBackgroundStars() {
+      for (let i = 0; i < 35; i++) {
+        const x = (i * 53) % GAME.width;
+        const y = (i * 97) % GAME.height;
+        const alpha = 0.1 + ((i * 19) % 10) / 100;
+        ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+        ctx.fillRect(x, y, 2, 2);
+      }
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, GAME.width, GAME.height);
+      drawBackgroundStars();
+
+      for (const c of circles) {
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, c.radius, 0, Math.PI * 2);
+        ctx.fillStyle = `hsl(${c.hue} 85% 62%)`;
+        ctx.fill();
+      }
+
+      ctx.fillStyle = player.color;
+      ctx.fillRect(player.x, player.y, player.width, player.height);
+
+      if (gameOver) {
+        ctx.fillStyle = 'rgba(0,0,0,0.45)';
+        ctx.fillRect(0, 0, GAME.width, GAME.height);
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 44px system-ui';
+        ctx.fillText('GAME OVER', GAME.width / 2, GAME.height / 2 - 10);
+        ctx.font = '600 24px system-ui';
+        ctx.fillText(`Final score: ${score}`, GAME.width / 2, GAME.height / 2 + 35);
+      }
+    }
+
+    function loop() {
+      update();
+      draw();
+      rafId = requestAnimationFrame(loop);
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowLeft') {
+        keys.left = true;
+        e.preventDefault();
+      }
+      if (e.key === 'ArrowRight') {
+        keys.right = true;
+        e.preventDefault();
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      if (e.key === 'ArrowLeft') keys.left = false;
+      if (e.key === 'ArrowRight') keys.right = false;
+    });
+
+    restartBtn.addEventListener('click', resetGame);
+
+    resetGame();
+  </script>
+</body>
+</html>
