@@ -76,21 +76,6 @@
       opacity: 1;
     }
 
-    .magnet-timer {
-      min-width: 170px;
-      text-align: center;
-      font-size: 0.95rem;
-      font-weight: 800;
-      color: #ffc6ff;
-      opacity: 0;
-      transition: opacity 160ms ease;
-      text-shadow: 0 0 10px rgba(255, 154, 255, 0.35);
-    }
-
-    .magnet-timer.show {
-      opacity: 1;
-    }
-
     .bomb-feed.show {
       opacity: 1;
     }
@@ -142,11 +127,10 @@
       <div>Score: <b id="score">0</b></div>
       <div class="misses">Misses: <b id="misses">0</b> / 5</div>
       <div class="freeze-timer" id="freezeTimer" role="status" aria-live="polite"></div>
-      <div class="magnet-timer" id="magnetTimer" role="status" aria-live="polite"></div>
       <div class="bomb-feed" id="bombFeed" role="status" aria-live="polite"></div>
     </section>
 
-    <canvas id="game" width="700" height="500" aria-label="Catch the Dopamine spil"></canvas>
+    <canvas id="game" width="700" height="800" aria-label="Catch the Dopamine spil"></canvas>
 
     <div class="controls">
       <div class="status" id="status">Brug ← og → for at bevæge spilleren.</div>
@@ -162,7 +146,6 @@
     const statusEl = document.getElementById('status');
     const bombFeedEl = document.getElementById('bombFeed');
     const freezeTimerEl = document.getElementById('freezeTimer');
-    const magnetTimerEl = document.getElementById('magnetTimer');
     const restartBtn = document.getElementById('restart');
 
     const GAME = {
@@ -172,16 +155,11 @@
       maxMisses: 5,
       spawnIntervalMs: 520,
       bombChance: 1 / 12,
-      bombBlastRadius: 160,
+      bombBlastRadius: 180,
       bombFeedDurationMs: 1200,
       freezeChance: 1 / 15,
       freezeDurationMs: 3000,
       freezeSpeedMultiplier: 0.35,
-      magnetChance: 1 / 18,
-      magnetDurationMs: 5000,
-      magnetRadius: 200,
-      magnetPullStrength: 0.09,
-      magnetMaxPullPerFrame: 7,
     };
 
     const player = {
@@ -203,7 +181,7 @@
     let explosionFx = [];
     let bombFeedTimeout = null;
     let freezeUntil = 0;
-    let magnetUntil = 0;
+    let lastFrameAt = performance.now();
 
     function random(min, max) {
       return Math.random() * (max - min) + min;
@@ -213,8 +191,7 @@
       const radius = random(10, 24);
       const shouldSpawnBomb = !previousSpawnWasBomb && Math.random() < GAME.bombChance;
       const shouldSpawnFreeze = !shouldSpawnBomb && Math.random() < GAME.freezeChance;
-      const shouldSpawnMagnet = !shouldSpawnBomb && !shouldSpawnFreeze && Math.random() < GAME.magnetChance;
-      const type = shouldSpawnBomb ? 'bomb' : shouldSpawnFreeze ? 'freeze' : shouldSpawnMagnet ? 'magnet' : 'normal';
+      const type = shouldSpawnBomb ? 'bomb' : shouldSpawnFreeze ? 'freeze' : 'normal';
       circles.push({
         x: random(radius, GAME.width - radius),
         y: -radius,
@@ -255,21 +232,18 @@
         x: bombCircle.x,
         y: bombCircle.y,
         age: 0,
-        maxAge: 320,
+        maxAge: 1000,
       });
 
-      showBombFeed(`💣 Bomb! +${removedCount} bonus`);
+      const bombMessage = `BOMB! +${removedCount}`;
+      showBombFeed(`💣 ${bombMessage}`);
+      statusEl.textContent = bombMessage;
       updateHud();
     }
 
     function activateFreeze() {
       freezeUntil = performance.now() + GAME.freezeDurationMs;
       updateFreezeHud(freezeUntil - performance.now());
-    }
-
-    function activateMagnet() {
-      magnetUntil = performance.now() + GAME.magnetDurationMs;
-      updateMagnetHud(magnetUntil - performance.now());
     }
 
     function updateFreezeHud(remainingMs) {
@@ -283,17 +257,6 @@
       freezeTimerEl.textContent = `❄ Freeze: ${(remainingMs / 1000).toFixed(1)}s`;
     }
 
-    function updateMagnetHud(remainingMs) {
-      if (remainingMs <= 0) {
-        magnetTimerEl.classList.remove('show');
-        magnetTimerEl.textContent = '';
-        return;
-      }
-
-      magnetTimerEl.classList.add('show');
-      magnetTimerEl.textContent = `🧲 Magnet: ${(remainingMs / 1000).toFixed(1)}s`;
-    }
-
     function resetGame() {
       circles = [];
       score = 0;
@@ -303,7 +266,7 @@
       previousSpawnWasBomb = false;
       explosionFx = [];
       freezeUntil = 0;
-      magnetUntil = 0;
+      lastFrameAt = performance.now();
       if (bombFeedTimeout) {
         clearTimeout(bombFeedTimeout);
         bombFeedTimeout = null;
@@ -312,8 +275,6 @@
       bombFeedEl.textContent = '';
       freezeTimerEl.classList.remove('show');
       freezeTimerEl.textContent = '';
-      magnetTimerEl.classList.remove('show');
-      magnetTimerEl.textContent = '';
       player.x = GAME.width / 2 - player.width / 2;
       updateHud();
       statusEl.textContent = 'Brug ← og → for at bevæge spilleren.';
@@ -338,10 +299,10 @@
       player.x = Math.max(0, Math.min(GAME.width - player.width, player.x));
 
       const now = performance.now();
+      const deltaMs = Math.min(50, now - lastFrameAt || 16);
+      lastFrameAt = now;
       const freezeActive = now < freezeUntil;
-      const magnetActive = now < magnetUntil;
       updateFreezeHud(freezeUntil - now);
-      updateMagnetHud(magnetUntil - now);
       if (now - lastSpawn >= GAME.spawnIntervalMs) {
         spawnCircle();
         lastSpawn = now;
@@ -350,19 +311,6 @@
       for (let i = circles.length - 1; i >= 0; i--) {
         const c = circles[i];
         c.y += c.speed * (freezeActive ? GAME.freezeSpeedMultiplier : 1);
-
-        if (magnetActive) {
-          const playerCenterX = player.x + player.width / 2;
-          const horizontalDistance = playerCenterX - c.x;
-          if (Math.abs(horizontalDistance) <= GAME.magnetRadius) {
-            const pull = Math.max(
-              -GAME.magnetMaxPullPerFrame,
-              Math.min(GAME.magnetMaxPullPerFrame, horizontalDistance * GAME.magnetPullStrength)
-            );
-            c.x += pull;
-            c.x = Math.max(c.radius, Math.min(GAME.width - c.radius, c.x));
-          }
-        }
 
         const withinX = c.x + c.radius > player.x && c.x - c.radius < player.x + player.width;
         const hitPlayer = c.y + c.radius >= player.y && c.y - c.radius <= player.y + player.height;
@@ -373,8 +321,6 @@
             triggerBombExplosion(c);
           } else if (c.type === 'freeze') {
             activateFreeze();
-          } else if (c.type === 'magnet') {
-            activateMagnet();
           } else {
             score += 1;
             updateHud();
@@ -406,7 +352,7 @@
 
       for (let i = explosionFx.length - 1; i >= 0; i--) {
         const fx = explosionFx[i];
-        fx.age += 16;
+        fx.age += deltaMs;
         if (fx.age >= fx.maxAge) {
           explosionFx.splice(i, 1);
         }
@@ -465,26 +411,6 @@
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText('❄', c.x, c.y + 1);
-          continue;
-        }
-
-        if (c.type === 'magnet') {
-          ctx.beginPath();
-          ctx.arc(c.x, c.y, c.radius, 0, Math.PI * 2);
-          ctx.fillStyle = '#ff9ed8';
-          ctx.fill();
-
-          ctx.beginPath();
-          ctx.arc(c.x, c.y, c.radius * 0.72, 0, Math.PI * 2);
-          ctx.strokeStyle = '#ffe6f7';
-          ctx.lineWidth = 2;
-          ctx.stroke();
-
-          ctx.fillStyle = '#4e1144';
-          ctx.font = `bold ${Math.max(11, c.radius)}px system-ui`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText('🧲', c.x, c.y + 1);
           continue;
         }
 
